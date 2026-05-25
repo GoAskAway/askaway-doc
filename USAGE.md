@@ -90,7 +90,7 @@ actr gen -l typescript -i proto -o src/generated
 ```protobuf
 service AskService {
   rpc Prompt(UsrPromptRequest) returns (AssistantReply);
-  rpc Attach(AttachRequest) returns (AttachResponse);
+  rpc PrepareAttachmentUpload(PrepareAttachmentUploadRequest) returns (PrepareAttachmentUploadResponse);
 }
 ```
 
@@ -105,7 +105,7 @@ service AskService {
 ```protobuf
 service ClientService {
   rpc Prompt(PromptRequest) returns (PromptResponse);
-  rpc Attach(AttachRequest) returns (AttachResponse);
+  rpc PrepareAttachmentUpload(PrepareAttachmentUploadRequest) returns (PrepareAttachmentUploadResponse);
 }
 ```
 
@@ -273,21 +273,29 @@ export class AskServiceHandler implements AskServiceHandlers {
 - `ctx.sendDataStream()` 将数据块推送到指定的客户端。
 - 流式推送是异步的，用 `void (async () => { ... })()` 避免阻塞 RPC 响应。
 
-### 4.2 attach — 处理附件上传
+### 4.2 prepareAttachmentUpload — 准备附件上传流
 
 ```typescript
-async attach(request: Ask_AttachRequest, _ctx: Context): Promise<Ask_AttachResponse> {
+async prepareAttachmentUpload(
+  request: Ask_PrepareAttachmentUploadRequest,
+  ctx: Context
+): Promise<Ask_PrepareAttachmentUploadResponse> {
   // 1. 校验
-  if (!request.id || !request.filename) {
+  if (!request.id || !request.filename || !request.streamId || !request.checksum) {
     return {
       id: request.id,
       statusCode: 400,
-      errorMessage: 'Missing id or filename',
+      errorMessage: 'Missing attachment upload metadata',
     };
   }
 
-  // 2. 持久化（S3、本地文件系统等）
-  await saveToStorage(request.id, request.data, request.filename);
+  // 2. 注册附件流回调，并准备临时存储和校验状态。
+  await ctx.registerStream(request.streamId, (err, signal) => {
+    if (err || !signal) {
+      return;
+    }
+    // Persist chunks and verify size/checksum after EOS.
+  });
 
   return {
     id: request.id,
@@ -364,22 +372,24 @@ const reply = await client.prompt({
 });
 ```
 
-### 5.3 上传附件
+### 5.3 准备附件上传
 
 ```typescript
-import { readFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 
-const fileData = readFileSync('/path/to/image.png');
-const reply = await client.attach({
+const reply = await client.prepareAttachmentUpload({
   id: crypto.randomUUID(),
   filename: 'image.png',
   type: 1, // IMAGE
-  data: fileData,
+  streamId: crypto.randomUUID(),
+  checksum: '5d41402abc4b2a76b9719d911017c592',
+  checksumAlgorithm: 'md5',
+  sizeBytes: 1024n,
 });
 
 if (reply.statusCode === 0) {
-  console.log('Attachment uploaded:', reply.id);
+  console.log('Attachment stream is ready:', reply.id);
+  // Send file chunks with sendDataStream(), then send EOS.
 }
 ```
 
