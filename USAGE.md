@@ -281,7 +281,7 @@ async prepareAttachmentUpload(
   ctx: Context
 ): Promise<Ask_PrepareAttachmentUploadResponse> {
   // 1. 校验
-  if (!request.id || !request.filename || !request.streamId || !request.checksum) {
+  if (!request.id || !request.filename || !request.streamId || !request.resultStreamId || !request.checksum) {
     return {
       id: request.id,
       statusCode: 400,
@@ -290,6 +290,7 @@ async prepareAttachmentUpload(
   }
 
   // 2. 注册附件流回调，并准备临时存储和校验状态。
+  // 校验完成后，通过 request.resultStreamId 向客户端发送 AttachmentUploadResult。
   await ctx.registerStream(request.streamId, (err, signal) => {
     if (err || !signal) {
       return;
@@ -382,6 +383,7 @@ const reply = await client.prepareAttachmentUpload({
   filename: 'image.png',
   type: 1, // IMAGE
   streamId: crypto.randomUUID(),
+  resultStreamId: crypto.randomUUID(),
   checksum: '5d41402abc4b2a76b9719d911017c592',
   checksumAlgorithm: 'md5',
   sizeBytes: 1024n,
@@ -390,6 +392,7 @@ const reply = await client.prepareAttachmentUpload({
 if (reply.statusCode === 0) {
   console.log('Attachment stream is ready:', reply.id);
   // Send file chunks with sendDataStream(), then send EOS.
+  // Wait for AttachmentUploadResult on resultStreamId before using reply.id in Prompt.
 }
 ```
 
